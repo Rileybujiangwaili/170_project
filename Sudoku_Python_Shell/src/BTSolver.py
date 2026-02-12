@@ -48,24 +48,24 @@ class BTSolver:
                 The bool is true if assignment is consistent, false otherwise.
     """
     def forwardChecking ( self ):
-    	modified_domains = {}
-    	assignedVars = [v for v in self.network.variables if v.isAssigned()]
+        modified_domains = {}
+        assigned_vars = [v for v in self.network.variables if v.isAssigned()]
 
-    	for av in assignedVars:
-	    val = av.getAssignment()
-        	for neighbor in self.network.getNeighborsOfVariable(av):
-            	if not neighbor.isAssigned() and neighbor.getDomain().contains(val):
-				self.trail.push(neighbor)
-                	neighbor.removeValueFromDomain(val)
-                	modified_domains[neighbor] = neighbor.getDomain()
-                	if neighbor.getDomain().isEmpty():
-                    		return (modified_domains, False)
+        for av in assigned_vars:
+            val = av.getAssignment()
+            for neighbor in self.network.getNeighborsOfVariable(av):
+                if (not neighbor.isAssigned()) and neighbor.getDomain().contains(val):
+                    self.trail.push(neighbor)
+                    neighbor.removeValueFromDomain(val)
+                    modified_domains[neighbor] = list(neighbor.getDomain().values)
 
-    	return (modified_domains, True)
+                    if neighbor.getDomain().isEmpty():
+                        return (modified_domains, False)
 
+        return (modified_domains, True)
     # =================================================================
-	# Arc Consistency
-	# =================================================================
+    # Arc Consistency
+    # =================================================================
     def arcConsistency( self ):
         assignedVars = []
         for c in self.network.constraints:
@@ -96,11 +96,52 @@ class BTSolver:
 
         Note: remember to trail.push variables before you assign them
         Return: a pair of a dictionary and a bool. The dictionary contains all variables 
-		        that were ASSIGNED during the whole NorvigCheck propagation, and mapped to the values that they were assigned.
+                that were ASSIGNED during the whole NorvigCheck propagation, and mapped to the values that they were assigned.
                 The bool is true if assignment is consistent, false otherwise.
     """
     def norvigCheck ( self ):
-        return ({}, False)
+        assigned_vars = {}  # var -> value assigned during propagation
+
+        changed = True
+        while changed:
+            changed = False
+
+            # Forward-checking pruning
+            fc_mods, ok = self.forwardChecking()
+            if not ok:
+                return (assigned_vars, False)
+
+            # Only-choice: for each constraint, if a value can only go in one var, assign it
+            for c in self.network.getConstraints():
+                scope = c.vars  # consistent with your arcConsistency usage
+
+                # collect possible values in this constraint among unassigned vars
+                possible_vals = set()
+                for var in scope:
+                    if not var.isAssigned():
+                        possible_vals.update(var.getDomain().values)
+
+                for val in possible_vals:
+                    candidates = []
+                    for var in scope:
+                        if (not var.isAssigned()) and var.getDomain().contains(val):
+                            candidates.append(var)
+
+                    if len(candidates) == 0:
+                        # no place for this value in this unit => inconsistent
+                        return (assigned_vars, False)
+
+                    if len(candidates) == 1:
+                        only_var = candidates[0]
+                        self.trail.push(only_var)
+                        only_var.assignValue(val)
+                        assigned_vars[only_var] = val
+                        changed = True
+
+                        if not self.assignmentsCheck():
+                            return (assigned_vars, False)
+
+        return (assigned_vars, True)
 
     """
          Optional TODO: Implement your own advanced Constraint Propagation
@@ -130,7 +171,10 @@ class BTSolver:
         Return: The unassigned variable with the smallest domain
     """
     def getMRV ( self ):
-        return None
+        unassigned = [v for v in self.network.variables if not v.isAssigned()]
+        if not unassigned:
+            return None
+        return min(unassigned, key=lambda v: v.getDomain().size())
 
     """
         Part 2 TODO: Implement the Minimum Remaining Value Heuristic
@@ -141,7 +185,22 @@ class BTSolver:
                 If there is only one variable, return the list of size 1 containing that variable.
     """
     def MRVwithTieBreaker ( self ):
-        return None
+        unassigned = [v for v in self.network.variables if not v.isAssigned()]
+        if not unassigned:
+            return [None]
+
+        min_size = min(v.getDomain().size() for v in unassigned)
+        mrv_vars = [v for v in unassigned if v.getDomain().size() == min_size]
+
+        if len(mrv_vars) == 1:
+          return mrv_vars
+
+        def degree(var):
+            return sum(1 for n in self.network.getNeighborsOfVariable(var) if not n.isAssigned())
+
+        max_deg = max(degree(v) for v in mrv_vars)
+        tied = [v for v in mrv_vars if degree(v) == max_deg]
+        return tied
 
     """
          Optional TODO: Implement your own advanced Variable Heuristic
@@ -158,8 +217,7 @@ class BTSolver:
 
     # Default Value Ordering
     def getValuesInOrder ( self, v ):
-        values = v.domain.values
-        return sorted( values )
+        return sorted(list(v.getDomain().values))
 
     """
         Part 1 TODO: Implement the Least Constraining Value Heuristic
@@ -171,7 +229,16 @@ class BTSolver:
                 The LCV is first and the MCV is last
     """
     def getValuesLCVOrder ( self, v ):
-        return None
+        values = list(v.getDomain().values)
+
+        def elim_count(val):
+            count = 0
+            for n in self.network.getNeighborsOfVariable(v):
+                if not n.isAssigned() and n.getDomain().contains(val):
+                    count += 1
+            return count
+
+        return sorted(values, key=elim_count)
 
     """
          Optional TODO: Implement your own advanced Value Heuristic
