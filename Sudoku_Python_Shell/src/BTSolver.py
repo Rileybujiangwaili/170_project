@@ -48,20 +48,34 @@ class BTSolver:
                 The bool is true if assignment is consistent, false otherwise.
     """
     def forwardChecking ( self ):
-    	modified_domains = {}
-    	assignedVars = [v for v in self.network.variables if v.isAssigned()]
+        modified_domains = {}
 
-    	for av in assignedVars:
-	    val = av.getAssignment()
-        	for neighbor in self.network.getNeighborsOfVariable(av):
-            	if not neighbor.isAssigned() and neighbor.getDomain().contains(val):
-				self.trail.push(neighbor)
-                	neighbor.removeValueFromDomain(val)
-                	modified_domains[neighbor] = neighbor.getDomain()
-                	if neighbor.getDomain().isEmpty():
-                    		return (modified_domains, False)
+        # If current assignments already violate a constraint, fail fast.
+        if not self.assignmentsCheck():
+            return ({}, False)
 
-    	return (modified_domains, True)
+        assigned_vars = [v for v in self.network.getVariables() if v.isAssigned()]
+        pushed = set()
+
+        for av in assigned_vars:
+            val = av.getAssignment()
+            for neighbor in self.network.getNeighborsOfVariable(av):
+                if neighbor.isAssigned():
+                    continue
+
+                if neighbor.getDomain().contains(val):
+                    # Save neighbor state once per FC call (before any pruning).
+                    if neighbor not in pushed:
+                        self.trail.push(neighbor)
+                        pushed.add(neighbor)
+
+                    neighbor.removeValueFromDomain(val)
+                    modified_domains[neighbor] = Domain.Domain([i for i in neighbor.getValues()])
+
+                    if neighbor.getDomain().isEmpty():
+                        return (modified_domains, False)
+
+        return (modified_domains, True)
 
     # =================================================================
 	# Arc Consistency
